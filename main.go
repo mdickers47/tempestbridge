@@ -2,12 +2,18 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"net"
 	"os"
 )
 
-const goofyUnits = true
+var (
+	listen_addr   string
+	graphite_addr string
+	goofy_units   bool
+	verbose       bool
+)
 
 type TempestMsg struct {
 	Serial_number string
@@ -52,49 +58,51 @@ func decodeMsg(tm *TempestMsg) []string {
 		fmt.Printf("message type %s not decoded\n", tm.Type)
 		fmt.Println(tm)
 	/*
-	case "evt_precip":
-		// rain start event
-	case "evt_strike":
-		// lightning strike event
-	case "obs_air":
-		// air sensor observation; maybe never sent by tempest system
-	case "obs_sky":
-		// sky sensor observation; maybe never sent by tempest system
+		case "evt_precip":
+			// rain start event
+		case "evt_strike":
+			// lightning strike event
+		case "obs_air":
+			// air sensor observation; maybe never sent by tempest system
+		case "obs_sky":
+			// sky sensor observation; maybe never sent by tempest system
 	*/
 	case "rapid_wind":
 		// instantaneous wind measurement
 		ts := int64(tm.Ob[0])
-		if goofyUnits {
-			tm.Ob[1] *= 2.23694 // m/s to mph
+		if goofy_units {
+			gms = append(gms, graphiteMsg("wind_speed_mph", tm.Ob[1]*2.23694, ts))
+		} else {
+			gms = append(gms, graphiteMsg("wind_speed_mps", tm.Ob[1], ts))
 		}
-		gms = append(gms, graphiteMsg("wind_speed", tm.Ob[1], ts))
 		gms = append(gms, graphiteMsg("wind_dir", tm.Ob[2], ts))
 	case "obs_st":
 		// tempest observation, an array of arrays per-device maybe?
 		for _, ob := range tm.Obs {
 			ts := int64(ob[0])
-			if goofyUnits {
-				ob[1] *= 2.23694 // m/s to mph
-				ob[2] *= 2.23694
-				ob[3] *= 2.23694
-				ob[7] = ob[7]*9/5 + 32 // c to f
-				ob[12] /= 25.4         // mm to in
-				ob[14] /= 1.60934      // km to mi
+			if goofy_units {
+				gms = append(gms, graphiteMsg("wind_lull_mph", ob[1]*2.23694, ts))
+				gms = append(gms, graphiteMsg("wind_avg_mph", ob[2]*2.23694, ts))
+				gms = append(gms, graphiteMsg("wind_gust_mph", ob[3]*2.23694, ts))
+				gms = append(gms, graphiteMsg("temp_f", ob[7]*9/5+32, ts))
+				gms = append(gms, graphiteMsg("rain_in", ob[12]/25.4, ts))
+				gms = append(gms, graphiteMsg("light_dst_mi", ob[14]/1.60934, ts))
+			} else {
+				gms = append(gms, graphiteMsg("wind_lull_mps", ob[1], ts))
+				gms = append(gms, graphiteMsg("wind_avg_mps", ob[2], ts))
+				gms = append(gms, graphiteMsg("wind_gust_mps", ob[3], ts))
+				gms = append(gms, graphiteMsg("temp_c", ob[7], ts))
+				gms = append(gms, graphiteMsg("rain_mm", ob[12], ts))
+				gms = append(gms, graphiteMsg("light_dst_km", ob[14], ts))
 			}
-			gms = append(gms, graphiteMsg("wind_lull", ob[1], ts))
-			gms = append(gms, graphiteMsg("wind_avg", ob[2], ts))
-			gms = append(gms, graphiteMsg("wind_gust", ob[3], ts))
 			gms = append(gms, graphiteMsg("wind_dir", ob[4], ts))
 			gms = append(gms, graphiteMsg("wind_int", ob[5], ts))
-			gms = append(gms, graphiteMsg("pres", ob[6], ts))
-			gms = append(gms, graphiteMsg("temp", ob[7], ts))
+			gms = append(gms, graphiteMsg("pres_hpa", ob[6], ts))
 			gms = append(gms, graphiteMsg("humd", ob[8], ts))
 			gms = append(gms, graphiteMsg("lumn", ob[9], ts))
 			gms = append(gms, graphiteMsg("uv", ob[10], ts))
 			gms = append(gms, graphiteMsg("solar_rad", ob[11], ts))
-			gms = append(gms, graphiteMsg("rain_1min", ob[12], ts))
 			gms = append(gms, graphiteMsg("prcp_type", ob[13], ts))
-			gms = append(gms, graphiteMsg("light_dst", ob[14], ts))
 			gms = append(gms, graphiteMsg("light_cnt", ob[15], ts))
 			gms = append(gms, graphiteMsg("batt_volt", ob[16], ts))
 			gms = append(gms, graphiteMsg("reprt_int", ob[17], ts))
@@ -124,31 +132,34 @@ func decodeMsg(tm *TempestMsg) []string {
 	return gms
 }
 
+func init() {
+	flag.StringVar(&listen_addr, "l", ":50222", "UDP socket to listen to")
+	flag.StringVar(&graphite_addr, "g", "graphite:2003",
+		"destination for graphite line-protocol UDP packets")
+	flag.BoolVar(&goofy_units, "u", false, "Use goofy (imperial) units")
+	flag.BoolVar(&verbose, "v", false, "Also print all packets to stdout")
+	flag.Parse()
+}
+
 func main() {
 
-	if len(os.Args) != 2 {
-		fmt.Println("only argument is graphite_host:port")
-		os.Exit(255)
+	laddr, err := net.ResolveUDPAddr("udp", listen_addr)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 	}
-
-	listen_addr, err := net.ResolveUDPAddr("udp", ":50222")
+	listen_conn, err := net.ListenUDP("udp", laddr)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
 
-	listen_conn, err := net.ListenUDP("udp", listen_addr)
+	send_conn, err := net.Dial("udp", graphite_addr)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-
-	send_conn, err := net.Dial("udp", os.Args[1])
-	if err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
-	fmt.Printf("sending graphite output to %s\n", os.Args[1])
+	fmt.Printf("sending graphite output to %s\n", graphite_addr)
 
 	var buf [2000]byte
 	var tm TempestMsg
@@ -159,15 +170,19 @@ func main() {
 		n, _, err := listen_conn.ReadFromUDP(buf[:])
 		if err != nil {
 			fmt.Printf("error on udp read: %s\n", err)
-		} else {
-			err := json.Unmarshal(buf[:n], &tm)
-			if err != nil {
-				fmt.Printf("error on unmarshal: %s\n", err)
-				fmt.Println("> ", string(buf[:n]))
+			continue
+		}
+		if err = json.Unmarshal(buf[:n], &tm); err != nil {
+			fmt.Printf("error on unmarshal: %s\n", err)
+			fmt.Println("> ", string(buf[:n]))
+			continue
+		}
+		for _, msg := range decodeMsg(&tm) {
+			if _, err = send_conn.Write(([]byte)(msg)); err != nil {
+				fmt.Printf("error on socket write: %s\n", err)
 			} else {
-				for _, msg := range decodeMsg(&tm) {
-					fmt.Printf("%s <- %s\n", os.Args[1], msg)
-					send_conn.Write(([]byte)(msg))
+				if (verbose) {
+					fmt.Printf("%s <- %s\n", graphite_addr, msg)
 				}
 			}
 		}
