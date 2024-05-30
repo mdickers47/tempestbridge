@@ -19,10 +19,10 @@ https://graphite.readthedocs.io/en/latest/feeding-carbon.html
 
 The result will be timeseries with the following names:
 
-wx.tempest.temp_c
-wx.tempest.pres_hpa
-wx.tempest.wind_speed_mph
-wx.tempest.wind_dir
++ wx.tempest.temp_c
++ wx.tempest.pres_hpa
++ wx.tempest.wind_speed_mph
++ wx.tempest.wind_dir
 
 And so on.
 
