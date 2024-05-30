@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -177,14 +178,15 @@ func main() {
 			fmt.Println("> ", string(buf[:n]))
 			continue
 		}
+		var b bytes.Buffer
 		for _, msg := range decodeMsg(&tm) {
-			if _, err = send_conn.Write(([]byte)(msg)); err != nil {
-				fmt.Printf("error on socket write: %s\n", err)
-			} else {
-				if (verbose) {
-					fmt.Printf("%s <- %s\n", graphite_addr, msg)
-				}
+			fmt.Fprintf(&b, "%s\n", msg)
+			if (verbose) {
+				fmt.Printf("%s <- %s\n", graphite_addr, msg)
 			}
+		}
+		if _, err = b.WriteTo(send_conn); err != nil {
+			fmt.Printf("error on socket write: %s\n", err)
 		}
 	}
 
