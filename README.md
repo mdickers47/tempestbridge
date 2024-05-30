@@ -26,10 +26,21 @@ The result will be timeseries with the following names:
 
 And so on.
 
-The -u option changes output to "goofy units", which means: m/s
-becomes mph, degrees C becomes degrees F, km becomes miles.  The
-timeseries name changes with the unit so that it is difficult to
+The -u option changes output to "goofy units", which means:
+
++ m/s becomes mph
++ degrees C becomes degrees F
++ km becomes miles
++ mm becomes inches
+
+The timeseries name changes with the unit so that it is difficult to
 create a corrupted timeseries with mixed units.
+
+## TODO
+
+This won't work right if your hub is reporting on multiple sensor
+devices.  I don't have multiple sensors, so I can't see how the hub
+reports them.
 
 ## Example
 
