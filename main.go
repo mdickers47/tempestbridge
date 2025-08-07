@@ -7,13 +7,16 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"time"
 )
 
 var (
-	listen_addr   string
-	graphite_addr string
-	goofy_units   bool
-	verbose       bool
+	listen_addr    string
+	graphite_addr  string
+	goofy_units    bool
+	verbose        bool
+	health_metric  string
+	last_healthmsg time.Time
 )
 
 type TempestMsg struct {
@@ -133,10 +136,24 @@ func decodeMsg(tm *TempestMsg) []string {
 	return gms
 }
 
+func sendHealth(conn *net.Conn, status int) {
+	if (health_metric != "") && last_healthmsg.Before(time.Now().Add(-60*time.Second)) {
+		last_healthmsg = time.Now()
+		msg := fmt.Sprintf("%s %d %d\n", health_metric, status, last_healthmsg.Unix())
+		if verbose {
+				fmt.Printf("%s <- %s", graphite_addr, msg)
+		}
+		if _, err := (*conn).Write([]byte(msg)); err != nil {
+			fmt.Printf("error on socket write: %s\n", err)
+		}
+	}
+}
+
 func init() {
 	flag.StringVar(&listen_addr, "l", ":50222", "UDP socket to listen to")
 	flag.StringVar(&graphite_addr, "g", "graphite:2003",
 		"destination for graphite line-protocol UDP packets")
+	flag.StringVar(&health_metric, "h", "", "metric to receive health status as a 1 or 0")
 	flag.BoolVar(&goofy_units, "u", false, "Use goofy (imperial) units")
 	flag.BoolVar(&verbose, "v", false, "Also print all packets to stdout")
 	flag.Parse()
@@ -168,26 +185,33 @@ func main() {
 	/* loop forever, processing each tempest udp packet we hear into
 	   graphite udp packets */
 	for {
-		n, _, err := listen_conn.ReadFromUDP(buf[:])
+		listen_conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+		n, err := listen_conn.Read(buf[:])
 		if err != nil {
 			fmt.Printf("error on udp read: %s\n", err)
+			sendHealth(&send_conn, 0)
 			continue
 		}
 		if err = json.Unmarshal(buf[:n], &tm); err != nil {
 			fmt.Printf("error on unmarshal: %s\n", err)
 			fmt.Println("> ", string(buf[:n]))
+			sendHealth(&send_conn, 0)
 			continue
 		}
 		var b bytes.Buffer
 		for _, msg := range decodeMsg(&tm) {
 			fmt.Fprintf(&b, "%s\n", msg)
-			if (verbose) {
+			if verbose {
 				fmt.Printf("%s <- %s\n", graphite_addr, msg)
 			}
 		}
 		if _, err = b.WriteTo(send_conn); err != nil {
 			fmt.Printf("error on socket write: %s\n", err)
+			sendHealth(&send_conn, 0)
+		} else {
+			sendHealth(&send_conn, 1)
 		}
+
 	}
 
 }
