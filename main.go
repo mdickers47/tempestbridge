@@ -11,12 +11,13 @@ import (
 )
 
 var (
-	listen_addr    string
-	graphite_addr  string
-	goofy_units    bool
-	verbose        bool
-	health_metric  string
-	last_healthmsg time.Time
+	listen_addr     string
+	graphite_addr   string
+	goofy_units     bool
+	verbose         bool
+	health_metric   string
+	last_healthmsg  time.Time
+	lightning_count int
 )
 
 type TempestMsg struct {
@@ -62,15 +63,19 @@ func decodeMsg(tm *TempestMsg) []string {
 		fmt.Printf("message type %s not decoded\n", tm.Type)
 		fmt.Println(tm)
 	/*
-		case "evt_precip":
-			// rain start event
-		case "evt_strike":
-			// lightning strike event
 		case "obs_air":
 			// air sensor observation; maybe never sent by tempest system
 		case "obs_sky":
 			// sky sensor observation; maybe never sent by tempest system
 	*/
+	case "evt_strike":
+		ts := int64(tm.Evt[0])
+		lightning_count += 1
+		gms = append(gms, graphiteMsg("lightning_count", float64(lightning_count), ts))
+		gms = append(gms, graphiteMsg("lightning_dist_km", tm.Evt[1], ts))
+		gms = append(gms, graphiteMsg("lightning_energy", tm.Evt[2], ts))
+	case "evt_precip":
+		gms = append(gms, graphiteMsg("precip_start", 1, int64(tm.Evt[0])))
 	case "rapid_wind":
 		// instantaneous wind measurement
 		ts := int64(tm.Ob[0])
@@ -141,7 +146,7 @@ func sendHealth(conn *net.Conn, status int) {
 		last_healthmsg = time.Now()
 		msg := fmt.Sprintf("%s %d %d\n", health_metric, status, last_healthmsg.Unix())
 		if verbose {
-				fmt.Printf("%s <- %s", graphite_addr, msg)
+			fmt.Printf("%s <- %s", graphite_addr, msg)
 		}
 		if _, err := (*conn).Write([]byte(msg)); err != nil {
 			fmt.Printf("error on socket write: %s\n", err)
